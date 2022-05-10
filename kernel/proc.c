@@ -27,44 +27,51 @@ volatile int sleeping_head = -1;
 volatile int unused_head = -1;
 struct spinlock zombie_lock, sleeping_lock, unused_lock;
 
-int remove_proc(volatile int curr, struct proc *to_remove, struct spinlock *head_lock)
+int remove_proc(volatile int *head_list, struct proc *to_remove, struct spinlock *head_lock)
 {
   acquire(head_lock);
-  acquire(to_remove);
-  if (curr == -1) // empty list case
+  if (*head_list == -1) // empty list case
   {
     release(head_lock);
     return -1;
   }
-  acquire(&proc[curr].p_lock);
-  release(head_lock);
-  if (&proc[curr].next == -1)
+  acquire(&proc[*head_list].p_lock);
+  if (&proc[*head_list].next == -1)
   {
-    if (curr == to_remove->proc_idx)
+    if (*head_list == to_remove->proc_idx)
     {
-      curr = -1;
-      release(&to_remove->p_lock);
-      release(&proc[curr].p_lock);
+      *head_list = -1;
+      release(&proc[*head_list].p_lock);
+      release(head_lock);
       return 1;
     }
     else
+    {
+      release(&proc[*head_list].p_lock);
+      release(head_lock);
       return -1;
+    }
   }
   else
   {
-    while (&proc[curr].next != -1)
+    release(head_lock);
+    volatile int *curr = head_list;
+    release(&proc[*head_list].p_lock); // check if need it
+    acquire(&proc[*curr].p_lock);      // check if need it
+    while (&proc[*curr].next != -1)
     {
-      acquire(&proc[proc[curr].next].p_lock);
-      if (&proc[proc[curr].next].proc_idx == to_remove->proc_idx)
+      acquire(&proc[proc[*curr].next].p_lock);
+      if (&proc[proc[*curr].next].proc_idx == to_remove->proc_idx)
       {
-        proc[curr].next = to_remove->next; // pointer as int?
+        proc[*curr].next = to_remove->next; // pointer as int?
         to_remove->next = -1;
+        release(&proc[proc[*curr].next].p_lock);
         return 1;
       }
-      release(&proc[curr].p_lock);
-      curr = &proc[curr].next;
+      release(&proc[*curr].p_lock);
+      curr = &proc[*curr].next;
     }
-    release(&proc[proc[curr].next].p_lock);
+    release(&proc[proc[*curr].next].p_lock);
   }
 }
 
@@ -81,7 +88,6 @@ void add_proc(volatile int *curr, struct proc *to_add, struct spinlock *head_loc
   {
     acquire(&proc[*curr].p_lock);
     release(head_lock);
-
     while (&proc[*curr].next != -1)
     {
       acquire(&proc[proc[*curr].next].p_lock);
@@ -373,7 +379,6 @@ int fork(void)
   {
     return -1;
   }
-
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
   {
@@ -403,6 +408,7 @@ int fork(void)
 
   acquire(&wait_lock);
   np->parent = p;
+  np->cpu = p->cpu; // need to modify later (q.4)
   release(&wait_lock);
 
   acquire(&np->lock);
@@ -468,6 +474,8 @@ void exit(int status)
   p->state = ZOMBIE;
 
   release(&wait_lock);
+
+  add_proc(zombie_head, p, &zombie_lock);
 
   // Jump into the scheduler, never to return.
   sched();
@@ -548,12 +556,11 @@ void scheduler(void)
 
     for (p = proc; p < &proc[NPROC]; p++)
     {
-      acquire(&p->lock);
-      if (p->state == RUNNABLE)
+      if (c->runnable_head != -1)
       {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
+        p = &proc[c->runnable_head];
+        acquire(&p->lock);
+        remove_proc(&c->runnable_head, p, &c->head_lock);
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
@@ -561,8 +568,8 @@ void scheduler(void)
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+        release(&p->lock);
       }
-      release(&p->lock);
     }
   }
 }
@@ -760,4 +767,23 @@ void procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int set_cpu(int cpu_num)
+{
+  struct proc *p = myproc();
+  if (cas(&p->cpu, p->cpu, cpu_num) != 0)
+    return -1;
+  yield();
+  return cpu_num;
+}
+
+int get_cpu()
+{
+  struct proc *p = myproc();
+  int cpu_num = -1;
+  acquire(&p->lock);
+  cpu_num = p->cpu;
+  release(&p->lock);
+  return cpu_num;
 }

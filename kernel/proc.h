@@ -25,6 +25,7 @@ struct cpu {
   int noff;                   // Depth of push_off() nesting.
   int intena;                 // Were interrupts enabled before push_off()?
   int runnable_head;
+  struct spinlock head_lock;
 };
 
 extern struct cpu cpus[NCPU];
@@ -98,7 +99,7 @@ struct proc {
   struct spinlock p_lock;
   volatile int next;
   int proc_idx;                  
-
+  
   // wait_lock must be held when using this:
   struct proc *parent;         // Parent process
 
