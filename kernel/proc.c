@@ -28,7 +28,7 @@ int unused_head = -1;
 struct spinlock zombie_lock, sleeping_lock, unused_lock;
 
 int find_remove(struct proc *curr_proc, struct proc *to_remove)
-{ 
+{
   while (curr_proc->next != -1)
   {
     acquire(&proc[curr_proc->next].p_lock);
@@ -39,8 +39,9 @@ int find_remove(struct proc *curr_proc, struct proc *to_remove)
       release(&curr_proc->p_lock);
       release(&to_remove->p_lock);
       return 1;
-    }else
-    release(&curr_proc->p_lock);
+    }
+    else
+      release(&curr_proc->p_lock);
     curr_proc = &proc[curr_proc->next];
   }
   release(&curr_proc->p_lock);
@@ -55,7 +56,7 @@ int remove_proc(int *head_list, struct proc *to_remove, struct spinlock *head_lo
   acquire(head_lock);
   if (*head_list == -1) // empty list case
   {
-    release(head_lock); 
+    release(head_lock);
     return -1;
   }
   acquire(&proc[*head_list].p_lock);
@@ -70,15 +71,16 @@ int remove_proc(int *head_list, struct proc *to_remove, struct spinlock *head_lo
   return find_remove(&proc[*head_list], to_remove);
 }
 
-void add_not_first(struct proc *curr, struct proc *to_add){
-  while(curr->next != -1)
-    {
-      release(&curr->p_lock);
-      curr = &proc[curr->next];
-      acquire(&curr->p_lock);
-    }
-    curr->next = to_add->proc_idx;
+void add_not_first(struct proc *curr, struct proc *to_add)
+{
+  while (curr->next != -1)
+  {
     release(&curr->p_lock);
+    curr = &proc[curr->next];
+    acquire(&curr->p_lock);
+  }
+  curr->next = to_add->proc_idx;
+  release(&curr->p_lock);
 }
 
 void add_proc(int *head, struct proc *to_add, struct spinlock *head_lock)
@@ -94,10 +96,9 @@ void add_proc(int *head, struct proc *to_add, struct spinlock *head_lock)
   {
     acquire(&proc[*head].p_lock);
     release(head_lock);
-    add_not_first(&proc[*head], to_add);  
+    add_not_first(&proc[*head], to_add);
   }
 }
-
 
 void init_locks()
 {
@@ -170,8 +171,7 @@ void procinit(void)
   //   printf("%d\n", p->proc_idx);
   //   p = &proc[p->next];
   // }
-      // printf("%s\n", "end printing test!");
-
+  // printf("%s\n", "end printing test!");
 
   // for (p = proc; p < &proc[NPROC]; p++)
   // {
@@ -243,7 +243,7 @@ found:
   p->pid = allocpid();
   // release(&p->p_lock); // Tali didnt
   p->state = USED;
-  remove_proc(&unused_head, p, &unused_lock); 
+  remove_proc(&unused_head, p, &unused_lock);
   // printf("%d\n", p->proc_idx);
   // acquire(&p->p_lock); // Tali didnt
   // Allocate a trapframe page.
@@ -373,7 +373,7 @@ void userinit(void)
 
   p->state = RUNNABLE;
   add_proc(&cpus[0].runnable_head, p, &cpus[0].head_lock);
-    // printf("%s\n", "line 392----------------------------------------");
+  // printf("%s\n", "line 392----------------------------------------");
   release(&p->lock);
 }
 
@@ -586,20 +586,20 @@ void scheduler(void)
   {
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-      if (c->runnable_head != -1)
-      {
-        p = &proc[c->runnable_head];
-        acquire(&p->lock);
-        remove_proc(&c->runnable_head, p, &c->head_lock);
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+    if (c->runnable_head != -1)
+    {
+      p = &proc[c->runnable_head];
+      acquire(&p->lock);
+      remove_proc(&c->runnable_head, p, &c->head_lock);
+      p->state = RUNNING;
+      c->proc = p;
+      swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        release(&p->lock);
-      }
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+      release(&p->lock);
+    }
   }
 }
 
@@ -701,7 +701,7 @@ void wakeup(void *chan)
   //   sleeping_head = proc[sleeping_head].next;
   // }
   struct proc *p;
-  printf("%s\n", "line 700---------------------");
+  // printf("%s\n", "line 700---------------------");
   if (sleeping_head != -1)
   {
     p = &proc[sleeping_head];
@@ -754,8 +754,11 @@ int kill(int pid)
       p->killed = 1;
       if (p->state == SLEEPING)
       {
+        remove_proc(&sleeping_head, p, &sleeping_lock);
         // Wake process from sleep().
         p->state = RUNNABLE;
+        struct cpu *c = &cpus[p->cpu];
+        add_proc(&c->runnable_head, p, &c->head_lock);
       }
       release(&p->lock);
       return 0;
