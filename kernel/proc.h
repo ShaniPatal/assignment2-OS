@@ -95,9 +95,9 @@ struct proc {
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
 
-  volatile int cpu;                 
+  int cpu;                 
   struct spinlock p_lock;
-  volatile int next;
+  int next;
   int proc_idx;                  
   
   // wait_lock must be held when using this:
