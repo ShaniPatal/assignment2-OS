@@ -12,7 +12,7 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
-int nextpid = 1;
+volatile int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
@@ -27,78 +27,152 @@ int sleeping_head = -1;
 int unused_head = -1;
 struct spinlock zombie_lock, sleeping_lock, unused_lock;
 
-int find_remove(struct proc *curr_proc, struct proc *to_remove)
+void
+print_list(int first_id)
 {
-  while (curr_proc->next != -1)
-  {
-    acquire(&proc[curr_proc->next].p_lock);
-    if (proc[curr_proc->next].proc_idx == to_remove->proc_idx)
+    printf("list:      ");
+    int curr = first_id;
+    while(curr != -1)
     {
-      curr_proc->next = to_remove->next;
-      to_remove->next = -1;
-      release(&curr_proc->p_lock);
-      release(&to_remove->p_lock);
-      return 1;
+        printf("%d -> ", curr);
+        curr = proc[curr].next;
     }
-    else
-      release(&curr_proc->p_lock);
-    curr_proc = &proc[curr_proc->next];
-  }
-  release(&curr_proc->p_lock);
-  return -1;
+    printf("\n");
 }
 
-int remove_proc(int *head_list, struct proc *to_remove, struct spinlock *head_lock)
-{
-  // printf("%s \n", "im in remove------------------------------------");
-  // printf("%d\n", to_remove->proc_idx );
+void remove_proc(int* first_proc_id, struct proc* remove_proc, struct spinlock* first_lock) { // Tali's
+    struct proc *curr_proc;
+    struct proc *prev_proc;
+    acquire(first_lock);
+    if (*first_proc_id == -1)
+        panic("list is empty - can't remove");
 
-  acquire(head_lock);
-  if (*head_list == -1) // empty list case
-  {
-    release(head_lock);
-    return -1;
-  }
-  acquire(&proc[*head_list].p_lock);
-  if (*head_list == to_remove->proc_idx)
-  {
-    *head_list = to_remove->next;
-    release(&to_remove->p_lock);
-    release(head_lock);
-    return 1;
-  }
-  release(head_lock);
-  return find_remove(&proc[*head_list], to_remove);
+    curr_proc = &proc[*first_proc_id];
+    acquire(&curr_proc->p_lock);
+    if (curr_proc->proc_idx == remove_proc->proc_idx){
+        *first_proc_id = remove_proc->next;
+        remove_proc->next= -1;
+        release(&curr_proc->p_lock);
+        release(first_lock);
+        return;
+    }
+
+    release(first_lock);
+    while (curr_proc->next != remove_proc->proc_idx){
+        if (curr_proc->next  == -1)
+            panic("finished the list - didnt find removed proc");
+
+        prev_proc = curr_proc;
+        curr_proc = &proc[prev_proc->next];
+        acquire(&curr_proc->p_lock);
+        release(&prev_proc->p_lock);
+    }
+    acquire(&remove_proc->p_lock);
+    curr_proc->next = remove_proc->next;
+    remove_proc->next= -1;
+    release(&remove_proc->p_lock);
+    release(&curr_proc->p_lock);
 }
 
-void add_not_first(struct proc *curr, struct proc *to_add)
-{
-  while (curr->next != -1)
-  {
-    release(&curr->p_lock);
-    curr = &proc[curr->next];
-    acquire(&curr->p_lock);
-  }
-  curr->next = to_add->proc_idx;
-  release(&curr->p_lock);
+// int find_remove(struct proc *curr_proc, struct proc *to_remove)
+// {
+//   while (curr_proc->next != -1)
+//   {
+//     acquire(&proc[curr_proc->next].p_lock);
+//     if (proc[curr_proc->next].proc_idx == to_remove->proc_idx)
+//     {
+//       curr_proc->next = to_remove->next;
+//       to_remove->next = -1;
+//       release(&curr_proc->p_lock);
+//       release(&to_remove->p_lock);
+//       return 1;
+//     }
+//     else
+//       release(&curr_proc->p_lock);
+//     curr_proc = &proc[curr_proc->next];
+//   }
+//   release(&curr_proc->p_lock);
+//   return -1;
+// }
+
+// int remove_proc(int *head_list, struct proc *to_remove, struct spinlock *head_lock)  
+// {
+//   // printf("%s \n", "im in remove------------------------------------");
+//   // printf("%d\n", to_remove->proc_idx );
+
+//   acquire(head_lock);
+//   if (*head_list == -1) // empty list case
+//   {
+//     printf("%s \n ", head_lock->name);
+//     release(head_lock);
+//     return -1;
+//   }
+//   acquire(&proc[*head_list].p_lock);
+//   if (*head_list == to_remove->proc_idx)
+//   {
+//     *head_list = to_remove->next;
+//     release(&to_remove->p_lock);
+//     release(head_lock);
+//     return 1;
+//   }
+//   release(head_lock);
+//   return find_remove(&proc[*head_list], to_remove);
+// }
+
+void add_proc(int* first_proc_id, struct proc* new_proc, struct spinlock* first_lock) {  //Tali's
+    struct proc *curr_proc;
+    struct proc *prev_proc;
+    acquire(first_lock);
+    if (*first_proc_id == -1){
+        *first_proc_id = new_proc->proc_idx;
+        new_proc->next = -1;
+        release(first_lock);
+        return;
+    }
+    curr_proc = &proc[*first_proc_id];
+    acquire(&curr_proc->p_lock);
+    release(first_lock);
+    while (curr_proc->next != -1){
+        prev_proc = curr_proc;
+        curr_proc = &proc[curr_proc->next];
+        acquire(&curr_proc->p_lock);
+        release(&prev_proc->p_lock);
+    }
+    curr_proc->next = new_proc->proc_idx;
+    new_proc->next= -1;
+    release(&curr_proc->p_lock);
 }
 
-void add_proc(int *head, struct proc *to_add, struct spinlock *head_lock)
-{
-  acquire(head_lock);
-  if (*head == -1)
-  {
-    *head = to_add->proc_idx;
-    proc[*head].next = -1;
-    release(head_lock);
-  }
-  else
-  {
-    acquire(&proc[*head].p_lock);
-    release(head_lock);
-    add_not_first(&proc[*head], to_add);
-  }
-}
+
+
+// void add_not_first(struct proc *curr, struct proc *to_add)
+// {
+//   while (curr->next != -1)
+//   {
+//     // release(&curr->p_lock);   // probablly need those locks.
+//     curr = &proc[curr->next];
+//     // acquire(&curr->p_lock);
+//   }
+//   curr->next = to_add->proc_idx;
+//   // release(&curr->p_lock);
+// }
+
+// void add_proc(int *head, struct proc *to_add, struct spinlock *head_lock)
+// {
+//   acquire(head_lock);
+//   if (*head == -1)
+//   {
+//     *head = to_add->proc_idx;
+//     proc[*head].next = -1;
+//     release(head_lock);
+//   }
+//   else
+//   {
+//     // acquire(&proc[*head].p_lock);
+//     release(head_lock);
+//     add_not_first(&proc[*head], to_add);
+//   }
+// }
 
 void init_locks()
 {
@@ -136,26 +210,54 @@ void proc_mapstacks(pagetable_t kpgtbl)
   }
 }
 
-// initialize the proc table at boot time.
-void procinit(void)
+
+void procinit(void) //   Tali's
 {
   init_locks();
-  int i = 0;
   struct proc *p;
+  struct cpu *c;
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
-  for (p = proc; p < &proc[NPROC]; p++)
-  {
-    initlock(&p->lock, "proc");
-    initlock(&p->p_lock, "p_lock");
-
-    p->kstack = KSTACK((int)(p - proc));
-    p->proc_idx = i;
-    p->next = -1;
-    add_proc(&unused_head, p, &unused_lock);
-    // printf("%d\n", p->proc_idx );
-    i++;
+  int i = -1;
+  for(p = proc; p < &proc[NPROC]; p++) {
+      i++;
+      initlock(&p->lock, "proc");
+      initlock(&p->p_lock, "node");
+      p->kstack = KSTACK((int) (p - proc));
+      p->proc_idx = i;
+      p->next = -1;
+      add_proc(&unused_head, p, &unused_lock);
   }
+    for(c = cpus; c < &cpus[NCPU]; c++) {
+        c->runnable_head = -1;
+        initlock(&c->head_lock, "runnable_node");
+    }
+}
+
+
+
+
+
+// initialize the proc table at boot time.
+// void procinit(void)
+// {
+//   init_locks();
+//   int i = 0;
+//   struct proc *p;
+//   initlock(&pid_lock, "nextpid");
+//   initlock(&wait_lock, "wait_lock");
+//   for (p = proc; p < &proc[NPROC]; p++)
+//   {
+//     initlock(&p->lock, "proc");
+//     initlock(&p->p_lock, "p_lock");
+
+//     p->kstack = KSTACK((int)(p - proc));
+//     p->proc_idx = i;
+//     p->next = -1;
+//     add_proc(&unused_head, p, &unused_lock);
+//     i++;
+//   }
+
   // p = &proc[unused_head];
   // while (p->next!= -1){
   //   printf("%d\n", p->proc_idx);
@@ -179,7 +281,7 @@ void procinit(void)
   //   printf("%d\n", p->proc_idx );
   // }
   // printf("%d\n", proc[unused_head].next);
-}
+// }
 
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
@@ -221,56 +323,110 @@ int allocpid()
   return pid;
 }
 
+
+static struct proc *
+allocproc(void)                  // Tali's
+{
+    struct proc *p;
+
+    if (unused_head != -1)
+    {
+        p = &proc[unused_head];
+        acquire(&p->lock);
+        goto found;
+    }
+
+    return 0;
+
+found:
+    p->pid = allocpid();
+    remove_proc(&unused_head, p, &unused_lock);
+    p->state = USED;
+
+    // Allocate a trapframe page.
+    if ((p->trapframe = (struct trapframe *)kalloc()) == 0)
+    {
+        freeproc(p);
+        release(&p->lock);
+        // releaseAndPrint(&p->lock, "allocproc 2", p);
+        return 0;
+    }
+
+    // An empty user page table.
+    p->pagetable = proc_pagetable(p);
+    if (p->pagetable == 0)
+    {
+        freeproc(p);
+        release(&p->lock);
+
+        // releaseAndPrint(&p->lock, "allocproc", p);
+        return 0;
+    }
+
+    // Set up new context to start executing at forkret,
+    // which returns to user space.
+    memset(&p->context, 0, sizeof(p->context));
+    p->context.ra = (uint64)forkret;
+    p->context.sp = p->kstack + PGSIZE;
+
+    return p;
+}
+
+
+
+
+
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
-static struct proc *
-allocproc(void)
-{
-  struct proc *p;
+// static struct proc *
+// allocproc(void)
+// {
+//   struct proc *p;
 
-  if (unused_head != -1)
-  {
-    p = &proc[unused_head];
-    acquire(&p->lock);
-    goto found;
-  }
+//   if (unused_head != -1)
+//   {
+//     p = &proc[unused_head];
+//     acquire(&p->lock);
+//     goto found;
+//   }
 
-  return 0;
+//   return 0;
 
-found:
-  p->pid = allocpid();
-  // release(&p->p_lock); // Tali didnt
-  p->state = USED;
-  remove_proc(&unused_head, p, &unused_lock);
-  // printf("%d\n", p->proc_idx);
-  // acquire(&p->p_lock); // Tali didnt
-  // Allocate a trapframe page.
-  if ((p->trapframe = (struct trapframe *)kalloc()) == 0)
-  {
-    freeproc(p);
-    release(&p->lock);
-    return 0;
-  }
+// found:
+//   p->pid = allocpid();
+//   // release(&p->p_lock); // if we release then panic. WHY??
+//   remove_proc(&unused_head, p, &unused_lock);
+//   p->state = USED;
+//   // printf("%s\n ", "line 247 ------------------");
+//   //  printf("%d\n", p->proc_idx);
+//   //  acquire(&p->p_lock); // Tali didnt
 
-  // An empty user page table.
-  p->pagetable = proc_pagetable(p);
-  if (p->pagetable == 0)
-  {
-    freeproc(p);
-    release(&p->lock);
-    return 0;
-  }
+//   // Allocate a trapframe page.
+//   if ((p->trapframe = (struct trapframe *)kalloc()) == 0)
+//   {
+//     freeproc(p);
+//     release(&p->lock);
+//     return 0;
+//   }
+//   // An empty user page table.
+//   p->pagetable = proc_pagetable(p);
+//   if (p->pagetable == 0)
+//   {
+//     freeproc(p);
+//     release(&p->lock);
+//     return 0;
+//   }
 
-  // Set up new context to start executing at forkret,
-  // which returns to user space.
-  memset(&p->context, 0, sizeof(p->context));
-  p->context.ra = (uint64)forkret;
-  p->context.sp = p->kstack + PGSIZE;
+//   // Set up new context to start executing at forkret,
+//   // which returns to user space.
+//   memset(&p->context, 0, sizeof(p->context));
+//   p->context.ra = (uint64)forkret;
+//   p->context.sp = p->kstack + PGSIZE;
 
-  return p;
-}
+//   return p;
+// }
 
 // free a proc structure and the data hanging from it,
 // including user pages.
@@ -291,8 +447,8 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
-  p->state = UNUSED;
   remove_proc(&zombie_head, p, &zombie_lock);
+  p->state = UNUSED;
   add_proc(&unused_head, p, &unused_lock);
 }
 
@@ -370,10 +526,8 @@ void userinit(void)
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
-
   p->state = RUNNABLE;
   add_proc(&cpus[0].runnable_head, p, &cpus[0].head_lock);
-  // printf("%s\n", "line 392----------------------------------------");
   release(&p->lock);
 }
 
@@ -447,8 +601,9 @@ int fork(void)
 
   acquire(&np->lock);
   np->state = RUNNABLE;
+  struct cpu *c = &cpus[np->cpu]; // is p and np must be in the same cpu?
+  add_proc(&c->runnable_head, np, &c->head_lock);
   release(&np->lock);
-  add_proc(&cpus[p->cpu].runnable_head, p, &cpus[p->cpu].head_lock);
 
   return pid;
 }
@@ -588,6 +743,8 @@ void scheduler(void)
     intr_on();
     if (c->runnable_head != -1)
     {
+      //   printf("runnable\n");
+      //  print_list(c->runnable_head);
       p = &proc[c->runnable_head];
       acquire(&p->lock);
       remove_proc(&c->runnable_head, p, &c->head_lock);
@@ -635,7 +792,8 @@ void yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
-  add_proc(&cpus[p->cpu].runnable_head, p, &cpus[p->cpu].head_lock);
+  struct cpu *c = &cpus[p->cpu];
+  add_proc(&c->runnable_head, p, &c->head_lock);
   sched();
   release(&p->lock);
 }
@@ -675,10 +833,15 @@ void sleep(void *chan, struct spinlock *lk)
   // so it's okay to release lk.
 
   acquire(&p->lock); // DOC: sleeplock1
+  // printf("unused\n");
+  // print_list(unused_head);
+  // printf("sleepig\n");
+  // print_list(sleeping_head);
+  add_proc(&sleeping_head, p, &sleeping_lock);
+  // printf("sleepig\n");
+  release(lk);
   p->chan = chan;
   p->state = SLEEPING;
-  add_proc(&sleeping_head, p, &sleeping_lock);
-  release(lk);
 
   // Go to sleep.
 
@@ -692,52 +855,82 @@ void sleep(void *chan, struct spinlock *lk)
   acquire(lk);
 }
 
-// Wake up all processes sleeping on chan.
-// Must be called without any p->lock.
-void wakeup(void *chan)
+void wakeup(void *chan)    // Tali's
 {
-  // while(proc[sleeping_head].next != -1){
-  //   printf("%d\n", proc[sleeping_head].proc_idx);
-  //   sleeping_head = proc[sleeping_head].next;
-  // }
   struct proc *p;
-  // printf("%s\n", "line 700---------------------");
-  if (sleeping_head != -1)
-  {
-    p = &proc[sleeping_head];
-    printf("%d\n", p->proc_idx);
-    acquire(&p->p_lock);
-    int cpu_num = p->cpu;
-    int next_proc = p->next;
-    if (p->chan == chan)
+  for (p = proc; p < &proc[NPROC]; p++)
+  { // TODO: update to run on sleeping only
+    if (p != myproc())
     {
-      release(&p->p_lock);
-      p->state = RUNNABLE;
-      remove_proc(&sleeping_head, p, &sleeping_lock);
-      add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
-    }
-    else
-    {
-      release(&p->p_lock);
-    }
-    while (next_proc != -1)
-    {
-      p = &proc[next_proc];
-      acquire(&p->p_lock);
-      cpu_num = p->cpu;
-      next_proc = p->next;
-      if (p->chan == chan)
+      acquire(&p->lock);
+      if (p->state == SLEEPING && p->chan == chan)
       {
-        release(&p->p_lock);
-        p->state = RUNNABLE;
+        // printf("%s \n","sleeping");
         remove_proc(&sleeping_head, p, &sleeping_lock);
-        add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
+        p->state = RUNNABLE;
+        // p->cpu = update_cpu(p->cpu);
+        struct cpu *c = &cpus[p->cpu];
+        add_proc(&c->runnable_head, p, &c->head_lock);
       }
-      else
-        release(&p->p_lock);
+      release(&p->lock);
     }
   }
 }
+
+
+// Wake up all processes sleeping on chan.
+// Must be called without any p->lock.
+// void wakeup(void *chan)
+// {
+//   // while(proc[sleeping_head].next != -1){
+//   //   printf("%d\n", proc[sleeping_head].proc_idx);
+//   //   sleeping_head = proc[sleeping_head].next;
+//   // }
+//   struct proc *p;
+//   // printf("%s\n", "line 700---------------------");
+//         // printf("%d\n", sleeping_head);
+//   //       p=proc;
+//   //   printf("running\n");
+//   // print_list(cpus[p->cpu].runnable_head);
+//   if (sleeping_head != -1)
+//   {
+//     // printf("%d\n", p->proc_idx);
+//     p = &proc[sleeping_head];
+//     acquire(&p->p_lock);
+//     int cpu_num = p->cpu;
+//     int next_proc = p->next;
+//     if (p->chan == chan)
+//     {
+//       // printf("%s\n","line 714 ----------------");
+//       release(&p->p_lock);
+//       remove_proc(&sleeping_head, p, &sleeping_lock);
+//       p->state = RUNNABLE;
+//       add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
+//     }
+//     else
+//     {
+//       release(&p->p_lock);
+//     }
+//     // printf("%s \n", p->state);  // when activated makes panice accuire. WHY?
+
+//     while (next_proc != -1)
+//     {
+//       p = &proc[next_proc];
+//       acquire(&p->p_lock);
+//       cpu_num = p->cpu;
+//       next_proc = p->next;
+//       if (p->chan == chan)
+//       {
+//         release(&p->p_lock);
+//         p->state = RUNNABLE;
+//         remove_proc(&sleeping_head, p, &sleeping_lock);
+//         add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
+//       }
+//       else
+//         release(&p->p_lock);
+//     }
+//   }
+// }
 
 // Kill the process with the given pid.
 // The victim won't exit until it tries to return
