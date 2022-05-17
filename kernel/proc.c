@@ -83,8 +83,8 @@ int find_remove(struct proc *curr_proc, struct proc *to_remove)
     {
       curr_proc->next = to_remove->next;
       to_remove->next = -1;
-      release(&curr_proc->p_lock);
       release(&to_remove->p_lock);
+      release(&curr_proc->p_lock);
       return 1;
     }
     release(&curr_proc->p_lock);
@@ -113,6 +113,21 @@ int remove_proc(int *head_list, struct proc *to_remove, struct spinlock *head_lo
   }
   release(head_lock);
   return find_remove(&proc[*head_list], to_remove);
+}
+
+int remove_first(int* head_list, struct spinlock* head_lock) {
+    acquire(head_lock);
+    if (*head_list == -1){
+        release(head_lock);
+        return -1;
+    }
+    struct proc *p = &proc[*head_list];
+    acquire(&p->p_lock);
+    *head_list = p->next;
+    p->next = -1;
+    release(&p->p_lock);
+    release(head_lock);
+    return p->proc_idx;
 }
 
 // void add_proc(int* first_proc_id, struct proc* new_proc, struct spinlock* first_lock) {  //Tali's
@@ -598,7 +613,7 @@ int fork(void)
   add_proc(&c->runnable_head, np, &c->head_lock);
   release(&np->lock);
   
-  procdump();
+  // procdump();
 
   return pid;
 }
@@ -737,11 +752,18 @@ void scheduler(void)
 
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-    if (c->runnable_head != -1)
+    int proc_to_run = remove_first(&c->runnable_head, &c->head_lock);
+    // if(proc_to_run != -1){
+    //   p = &proc[proc_to_run];
+    //   acquire(&p->lock);
+    //   p->state = RUNNING;
+    //   c->proc = p;
+    //   swtch(&c->context, &p->context);
+    if (proc_to_run != -1)
     {
-      p = &proc[c->runnable_head];
+      p = &proc[proc_to_run];
       acquire(&p->lock);
-      remove_proc(&c->runnable_head, p, &c->head_lock);
+      // remove_proc(&c->runnable_head, p, &c->head_lock);
       p->state = RUNNING;
       c->proc = p;
       swtch(&c->context, &p->context);
