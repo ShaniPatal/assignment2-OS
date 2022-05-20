@@ -98,7 +98,7 @@ void add_not_first(struct proc *curr, struct proc *to_add)
   while (curr->next != -1)
   {
     acquire(&proc[curr->next].p_lock);
-    release(&curr->p_lock); //  NEED to add prev
+    release(&curr->p_lock); 
     curr = &proc[curr->next];
   }
   to_add->next = -1;
