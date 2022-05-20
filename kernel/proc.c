@@ -413,144 +413,69 @@ int growproc(int n)
   return 0;
 }
 
-void increase_num_process(struct cpu* c){
-    while(cas(&c->proc_counter, c->proc_counter, c->proc_counter + 1) != 0);
-}
-
-int update_cpu(int cpu_id){
-    int new_cpu = cpu_id;
-    if (load_balancer)
-        new_cpu = least_used_cpu();
-    if (new_cpu != cpu_id)
-        increase_num_process(&cpus[new_cpu]);
-    return new_cpu;
-}
-
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
-// int fork(void)
-// {
-//   int i, pid;
-//   struct proc *np;
-//   struct proc *p = myproc();
-
-//   // Allocate process.
-//   if ((np = allocproc()) == 0)
-//   {
-//     return -1;
-//   }
-//   // Copy user memory from parent to child.
-//   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
-//   {
-//     freeproc(np);
-//     release(&np->lock);
-//     return -1;
-//   }
-//   np->sz = p->sz;
-
-//   // copy saved user registers.
-//   *(np->trapframe) = *(p->trapframe);
-
-//   // Cause fork to return 0 in the child.
-//   np->trapframe->a0 = 0;
-
-//   // increment reference counts on open file descriptors.
-//   for (i = 0; i < NOFILE; i++)
-//     if (p->ofile[i])
-//       np->ofile[i] = filedup(p->ofile[i]);
-//   np->cwd = idup(p->cwd);
-
-//   safestrcpy(np->name, p->name, sizeof(p->name));
-
-//   pid = np->pid;
-//   release(&np->lock);
-
-//   acquire(&wait_lock);
-//   np->parent = p;
-//   int np_cpu = p->cpu;
-//     if (load_balancer){
-//         np_cpu = least_used_cpu();
-//         increase_num_process(&cpus[np_cpu]);
-//     }
-//   // np->cpu = p->cpu;
-//   // struct cpu *c = &cpus[np->cpu];
-//   // int np_cpu = p->cpu;
-//   // if (load_balancer)
-//   // {
-//   //   np_cpu = least_used_cpu();
-//   //   np->cpu = np_cpu;
-//   //   c = &cpus[np->cpu];
-//   //   int counter;
-//   //   do{
-//   //     counter = c->proc_counter;
-//   //   }while(cas(&c->proc_counter, counter, counter + 1));
-//   // }
-//   //   while(cas(&c->proc_counter, c->proc_counter, c->proc_counter + 1) != 0);
-//   // }
-//   release(&wait_lock);
-//   acquire(&np->lock);
-//   struct cpu *c = &cpus[np->cpu];
-//   np->state = RUNNABLE;
-//   add_proc(&c->runnable_head, np, &c->head_lock);
-//   release(&np->lock);
-
-//   return pid;
-// }
-
-int
-fork(void)
+int fork(void)
 {
-    int i, pid;
-    struct proc *np;
-    struct proc *p = myproc();
+  int i, pid;
+  struct proc *np;
+  struct proc *p = myproc();
 
-    // Allocate process.
-    if((np = allocproc()) == 0){
-        return -1;
-    }
-
-    // Copy user memory from parent to child.
-    if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
-        freeproc(np);
-        release(&np->lock);
-        return -1;
-    }
-    np->sz = p->sz;
-
-    // copy saved user registers.
-    *(np->trapframe) = *(p->trapframe);
-
-    // Cause fork to return 0 in the child.
-    np->trapframe->a0 = 0;
-
-    // increment reference counts on open file descriptors.
-    for(i = 0; i < NOFILE; i++)
-        if(p->ofile[i])
-            np->ofile[i] = filedup(p->ofile[i]);
-    np->cwd = idup(p->cwd);
-
-    safestrcpy(np->name, p->name, sizeof(p->name));
-
-    pid = np->pid;
+  // Allocate process.
+  if ((np = allocproc()) == 0)
+  {
+    return -1;
+  }
+  // Copy user memory from parent to child.
+  if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
+  {
+    freeproc(np);
     release(&np->lock);
+    return -1;
+  }
+  np->sz = p->sz;
 
-    acquire(&wait_lock);
-    np->parent = p;
-    // np->cpu  = update_cpu(p->cpu);
-    np->cpu = p->cpu;;
-    if (load_balancer){
-        np->cpu = least_used_cpu();
-        increase_num_process(&cpus[np->cpu]);
+  // copy saved user registers.
+  *(np->trapframe) = *(p->trapframe);
+// 
+  // Cause fork to return 0 in the child.
+  np->trapframe->a0 = 0;
+
+  // increment reference counts on open file descriptors.
+  for (i = 0; i < NOFILE; i++)
+    if (p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = idup(p->cwd);
+
+  safestrcpy(np->name, p->name, sizeof(p->name));
+
+  pid = np->pid;
+  release(&np->lock);
+
+  acquire(&wait_lock);
+  np->parent = p;
+
+  np->cpu = p->cpu;
+  struct cpu *c = &cpus[np->cpu];
+  if (load_balancer)
+  {
+    int np_cpu_num = least_used_cpu();
+    np->cpu = np_cpu_num;
+    if(np_cpu_num != c->cpu_idx){
+      c = &cpus[np->cpu];
+      int counter;
+      do{
+        counter = c->proc_counter;
+      }while(cas(&c->proc_counter, counter, counter + 1));
     }
-    release(&wait_lock);
+  }
+  release(&wait_lock);
+  acquire(&np->lock);
+  np->state = RUNNABLE;
+  add_proc(&c->runnable_head, np, &c->head_lock);
+  release(&np->lock);
 
-    acquire(&np->lock);
-    np->state = RUNNABLE;
-    struct cpu *c = &cpus[np->cpu];
-    add_proc(&c->runnable_head, np, &c->head_lock);
-    release(&np->lock);
-
-    return pid;
+  return pid;
 }
 
 // Pass p's abandoned children to init.
@@ -796,88 +721,54 @@ void wakeup_help(struct proc *p, void *chan)
 {
   if (p->state == SLEEPING && p->chan == chan)
   {
-    remove_proc(&sleeping_head, p, &sleeping_lock);
     p->state = RUNNABLE;
     if (load_balancer)
     {
-      p->cpu = least_used_cpu();
-      struct cpu *c = &cpus[p->cpu];
-      int count;
-      do
-      {
-        count = c->proc_counter;
-      } while (cas(&c->proc_counter, count, count + 1) != 0);
+      int least_cpu_num = least_used_cpu();
+      if(p->cpu != least_cpu_num){
+        p->cpu = least_cpu_num;
+        struct cpu *c = &cpus[p->cpu];
+        int count;
+        do
+        {
+          count = c->proc_counter;
+        } while (cas(&c->proc_counter, count, count + 1) != 0);
+      }
     }
     int cpu_num = p->cpu;
+    remove_proc(&sleeping_head, p, &sleeping_lock);
     add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
   }
 }
 
 // Wake up all processes sleeping on chan.
 // Must be called without any p->lock.
-// void wakeup(void *chan)
-// {
-//   struct proc *p;
-//   acquire(&sleeping_lock);
-//   if (sleeping_head != -1)
-//   {
-//     int next_proc;
-//     p = &proc[sleeping_head];
-//     acquire(&p->lock);
-//     release(&sleeping_lock);
-//     next_proc = p->next;
-//     wakeup_help(p, chan);
-//     release(&p->lock);
-//     while (next_proc != -1)
-//     {
-//       p = &proc[next_proc];
-//       acquire(&p->lock);
-//       next_proc = p->next;
-//       wakeup_help(p, chan);
-//       release(&p->lock);
-//     }
-//   }
-//   else{
-//     release(&sleeping_lock);
-//   }
-// }
-
-
-void trigger_wakeup(void * chan, struct proc* p){
-    struct cpu *c;
-    if (p->state == SLEEPING && p->chan == chan) {
-        if(remove_proc(&sleeping_head, p, &sleeping_lock)){
-            p->state = RUNNABLE;
-            p->cpu = update_cpu(p->cpu);
-            c = &cpus[p->cpu];
-            add_proc(&c->runnable_head, p, &c->head_lock);
-        }
-    }
-}
-
-void
-wakeup(void *chan)
+void wakeup(void *chan)
 {
-    struct proc *p;
-    acquire(&sleeping_lock);
-    if(sleeping_head == -1){
-        release(&sleeping_lock);
-        return;
-    }
+  struct proc *p;
+  acquire(&sleeping_lock);
+  if (sleeping_head != -1)
+  {
+    int next_proc;
     p = &proc[sleeping_head];
     acquire(&p->lock);
     release(&sleeping_lock);
-    int next = p->next;
-    trigger_wakeup(chan, p);
-    release(&p->lock);
-
-    while(next != -1){
-        p = &proc[next];
-        acquire(&p->lock);
-        next = p->next;
-        trigger_wakeup(chan, p);
-        release(&p->lock);
+    next_proc = p->next;
+    wakeup_help(p, chan);
+    while (next_proc != -1)
+    {
+      struct proc *temp = &proc[next_proc];
+      acquire(&temp->lock);
+      release(&p->lock);
+      p = temp;
+      next_proc = p->next;
+      wakeup_help(p, chan);
     }
+    release(&p->lock);
+  }
+  else{
+    release(&sleeping_lock);
+  }
 }
 
 // Kill the process with the given pid.
