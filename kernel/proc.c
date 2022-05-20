@@ -26,15 +26,31 @@ int zombie_head = -1;
 int sleeping_head = -1;
 int unused_head = -1;
 struct spinlock zombie_lock, sleeping_lock, unused_lock;
-// int load_balancer;
 
 #ifdef ON
-  int load_balancer = 1;
-#else 
-  int load_balancer = 0;
+int load_balancer = 1;
+#else
+int load_balancer = 0;
 #endif
 
+int cpus_num = CPUS;
 
+int remove_first(int *head_list, struct spinlock *head_lock)
+{
+  acquire(head_lock);
+  if (*head_list == -1)
+  {
+    release(head_lock);
+    return -1;
+  }
+  struct proc *p = &proc[*head_list];
+  acquire(&p->p_lock);
+  *head_list = p->next;
+  p->next = -1;
+  release(&p->p_lock);
+  release(head_lock);
+  return p->proc_idx;
+}
 
 int find_remove(struct proc *curr_proc, struct proc *to_remove)
 {
@@ -77,29 +93,12 @@ int remove_proc(int *head_list, struct proc *to_remove, struct spinlock *head_lo
   return find_remove(&proc[*head_list], to_remove);
 }
 
-int remove_first(int *head_list, struct spinlock *head_lock)
-{
-  acquire(head_lock);
-  if (*head_list == -1)
-  {
-    release(head_lock);
-    return -1;
-  }
-  struct proc *p = &proc[*head_list];
-  acquire(&p->p_lock);
-  *head_list = p->next;
-  p->next = -1;
-  release(&p->p_lock);
-  release(head_lock);
-  return p->proc_idx;
-}
-
 void add_not_first(struct proc *curr, struct proc *to_add)
 {
   while (curr->next != -1)
   {
     acquire(&proc[curr->next].p_lock);
-    release(&curr->p_lock); //  NEED to add prev
+    release(&curr->p_lock); 
     curr = &proc[curr->next];
   }
   to_add->next = -1;
@@ -140,19 +139,24 @@ void init_locksncpus()
   }
 }
 
-int least_used_cpu(){ 
-  int least_used_cpu = -1;
+int least_used_cpu()
+{
   struct cpu *c = &cpus[0];
-  c++;
-  
-  for (c = cpus; c < &cpus[NCPU]; c++)
+  int least_used = 0;
+  int min_proc_counter = c->proc_counter;
+
+  for (int i = 1; i < cpus_num; i++)
   {
-    if(least_used_cpu == -1 || c->proc_counter < least_used_cpu){
-      least_used_cpu = c->cpu_idx; 
+    c = &cpus[i];
+    if (c->proc_counter < min_proc_counter)
+    {
+      least_used = i;
+      min_proc_counter = c->proc_counter;
     }
   }
-  return least_used_cpu;
+  return least_used;
 }
+
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -245,14 +249,12 @@ static struct proc *
 allocproc(void)
 {
   struct proc *p;
-
   if (unused_head != -1)
   {
     p = &proc[unused_head];
     acquire(&p->lock);
     goto found;
   }
-
   return 0;
 
 found:
@@ -435,7 +437,7 @@ int fork(void)
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
-
+// 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
@@ -448,15 +450,24 @@ int fork(void)
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
-
   release(&np->lock);
+
   acquire(&wait_lock);
   np->parent = p;
-  np->cpu = p->cpu;  
+
+  np->cpu = p->cpu;
   struct cpu *c = &cpus[np->cpu];
-  if(load_balancer){
-    np->cpu = least_used_cpu();
-    while(cas(&c->proc_counter, c->proc_counter, c->proc_counter + 1) != 0);
+  if (load_balancer)
+  {
+    int np_cpu_num = least_used_cpu();
+    np->cpu = np_cpu_num;
+    if(np_cpu_num != c->cpu_idx){
+      c = &cpus[np->cpu];
+      int counter;
+      do{
+        counter = c->proc_counter;
+      }while(cas(&c->proc_counter, counter, counter + 1));
+    }
   }
   release(&wait_lock);
   acquire(&np->lock);
@@ -706,49 +717,57 @@ void sleep(void *chan, struct spinlock *lk)
   acquire(lk);
 }
 
+void wakeup_help(struct proc *p, void *chan)
+{
+  if (p->state == SLEEPING && p->chan == chan)
+  {
+    p->state = RUNNABLE;
+    if (load_balancer)
+    {
+      int least_cpu_num = least_used_cpu();
+      if(p->cpu != least_cpu_num){
+        p->cpu = least_cpu_num;
+        struct cpu *c = &cpus[p->cpu];
+        int count;
+        do
+        {
+          count = c->proc_counter;
+        } while (cas(&c->proc_counter, count, count + 1) != 0);
+      }
+    }
+    int cpu_num = p->cpu;
+    remove_proc(&sleeping_head, p, &sleeping_lock);
+    add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
+  }
+}
+
 // Wake up all processes sleeping on chan.
 // Must be called without any p->lock.
 void wakeup(void *chan)
 {
   struct proc *p;
+  acquire(&sleeping_lock);
   if (sleeping_head != -1)
   {
+    int next_proc;
     p = &proc[sleeping_head];
-    acquire(&p->p_lock);
-    int cpu_num = p->cpu;
-    int next_proc = p->next;
-    if (p->chan == chan)
-    {
-      release(&p->p_lock);
-      remove_proc(&sleeping_head, p, &sleeping_lock);
-      p->state = RUNNABLE;
-      add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
-      if(load_balancer){
-        p->cpu = least_used_cpu();
-        struct cpu *c = &cpus[p->cpu];
-        while(cas(&c->proc_counter, c->proc_counter, c->proc_counter + 1) != 0);
-      }
-    }
-    else
-    {
-      release(&p->p_lock);
-    }
+    acquire(&p->lock);
+    release(&sleeping_lock);
+    next_proc = p->next;
+    wakeup_help(p, chan);
     while (next_proc != -1)
     {
-      p = &proc[next_proc];
-      acquire(&p->p_lock);
-      cpu_num = p->cpu;
+      struct proc *temp = &proc[next_proc];
+      acquire(&temp->lock);
+      release(&p->lock);
+      p = temp;
       next_proc = p->next;
-      if (p->chan == chan)
-      {
-        release(&p->p_lock);
-        p->state = RUNNABLE;
-        remove_proc(&sleeping_head, p, &sleeping_lock);
-        add_proc(&cpus[cpu_num].runnable_head, p, &cpus[cpu_num].head_lock);
-      }
-      else
-        release(&p->p_lock);
+      wakeup_help(p, chan);
     }
+    release(&p->lock);
+  }
+  else{
+    release(&sleeping_lock);
   }
 }
 

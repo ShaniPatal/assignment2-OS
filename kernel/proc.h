@@ -20,12 +20,14 @@ struct context {
 
 // Per-CPU state.
 struct cpu {
+  int cpu_idx;
   struct proc *proc;          // The process running on this cpu, or null.
   struct context context;     // swtch() here to enter scheduler().
   int noff;                   // Depth of push_off() nesting.
   int intena;                 // Were interrupts enabled before push_off()?
   int runnable_head;
   struct spinlock head_lock;
+  volatile uint64 proc_counter;
 };
 
 extern struct cpu cpus[NCPU];
